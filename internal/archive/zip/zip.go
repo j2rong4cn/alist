@@ -1,15 +1,16 @@
 package zip
 
 import (
+	"io"
+	"os"
+	stdpath "path"
+	"strings"
+
 	"github.com/alist-org/alist/v3/internal/archive/tool"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/internal/stream"
 	"github.com/yeka/zip"
-	"io"
-	"os"
-	stdpath "path"
-	"strings"
 )
 
 type Zip struct {
@@ -53,6 +54,7 @@ func (_ *Zip) List(ss *stream.SeekableStream, args model.ArchiveInnerArgs) ([]mo
 	if args.InnerPath == "/" {
 		ret := make([]model.Obj, 0)
 		passVerified := false
+		var dir *model.Object
 		for _, file := range zipReader.File {
 			if !passVerified && file.IsEncrypted() {
 				file.SetPassword(args.Password)
@@ -63,11 +65,23 @@ func (_ *Zip) List(ss *stream.SeekableStream, args model.ArchiveInnerArgs) ([]mo
 				_ = rc.Close()
 				passVerified = true
 			}
-			name := decodeName(file.Name)
-			if strings.Contains(strings.TrimSuffix(name, "/"), "/") {
+			name := strings.TrimSuffix(decodeName(file.Name), "/")
+			if strings.Contains(name, "/") {
+				// 有些压缩包不压缩第一个文件夹
+				strs := strings.Split(name, "/")
+				if dir == nil && len(strs) == 2 {
+					dir = &model.Object{
+						Name:     strs[0],
+						Modified: ss.ModTime(),
+						IsFolder: true,
+					}
+				}
 				continue
 			}
 			ret = append(ret, toModelObj(file.FileInfo()))
+		}
+		if len(ret) == 0 && dir != nil {
+			ret = append(ret, dir)
 		}
 		return ret, nil
 	} else {
@@ -76,13 +90,11 @@ func (_ *Zip) List(ss *stream.SeekableStream, args model.ArchiveInnerArgs) ([]mo
 		exist := false
 		for _, file := range zipReader.File {
 			name := decodeName(file.Name)
-			if name == innerPath {
-				exist = true
-			}
 			dir := stdpath.Dir(strings.TrimSuffix(name, "/")) + "/"
 			if dir != innerPath {
 				continue
 			}
+			exist = true
 			ret = append(ret, toModelObj(file.FileInfo()))
 		}
 		if !exist {

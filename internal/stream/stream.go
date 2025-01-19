@@ -350,27 +350,23 @@ func NewReadAtSeeker(ss *SeekableStream, offset int64, forceRange ...bool) (SStr
 		}
 		return &FileReadAtSeeker{ss: ss}, nil
 	}
-	var r io.Reader
-	var err error
+	r := &RangeReadReadAtSeeker{
+		ss:        ss,
+		masterOff: offset,
+	}
 	if offset != 0 || utils.IsBool(forceRange...) {
 		if offset < 0 || offset > ss.GetSize() {
 			return nil, errors.New("offset out of range")
 		}
-		r, err = ss.RangeRead(http_range.Range{Start: offset, Length: -1})
+		_, err := r.getReaderAtOffset(offset)
 		if err != nil {
 			return nil, err
 		}
-		if rc, ok := r.(io.Closer); ok {
-			ss.Closers.Add(rc)
-		}
 	} else {
-		r = ss
+		rc := &readerCur{reader: ss, cur: offset}
+		r.readers = append(r.readers, rc)
 	}
-	return &RangeReadReadAtSeeker{
-		ss:        ss,
-		masterOff: offset,
-		readers:   []*readerCur{{reader: r, cur: offset}},
-	}, nil
+	return r, nil
 }
 
 func (r *RangeReadReadAtSeeker) GetRawStream() *SeekableStream {
@@ -383,7 +379,8 @@ func (r *RangeReadReadAtSeeker) getReaderAtOffset(off int64) (*readerCur, error)
 			return reader, nil
 		}
 	}
-	reader, err := r.ss.RangeRead(http_range.Range{Start: off, Length: -1})
+	// Range请求不能超过文件大小，有些云盘处理不了就会返回整个文件
+	reader, err := r.ss.RangeRead(http_range.Range{Start: off, Length: r.ss.GetSize() - off})
 	if err != nil {
 		return nil, err
 	}
@@ -400,16 +397,26 @@ func (r *RangeReadReadAtSeeker) ReadAt(p []byte, off int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	num := 0
+	n, num := 0, 0
 	for num < len(p) {
-		n, err := rc.reader.Read(p[num:])
+		n, err = rc.reader.Read(p[num:])
 		rc.cur += int64(n)
 		num += n
-		if err != nil {
-			return num, err
+		if err == nil {
+			continue
 		}
+		if err == io.EOF {
+			// io.EOF是reader读取完了
+			rc.cur = -1
+			// yeka/zip包 没有处理EOF，我们要兼容
+			// https://github.com/yeka/zip/blob/03d6312748a9d6e0bc0c9a7275385c09f06d9c14/reader.go#L433
+			if num == len(p) {
+				err = nil
+			}
+		}
+		break
 	}
-	return num, nil
+	return num, err
 }
 
 func (r *RangeReadReadAtSeeker) Seek(offset int64, whence int) (int64, error) {

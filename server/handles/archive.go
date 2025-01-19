@@ -2,6 +2,10 @@ package handles
 
 import (
 	"fmt"
+	"net/url"
+	stdpath "path"
+	"strings"
+
 	"github.com/alist-org/alist/v3/internal/archive/tool"
 	"github.com/alist-org/alist/v3/internal/conf"
 	"github.com/alist-org/alist/v3/internal/errs"
@@ -15,9 +19,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"mime"
-	stdpath "path"
-	"strings"
 )
 
 type ArchiveMetaReq struct {
@@ -360,14 +361,11 @@ func ArchiveInternalExtract(c *gin.Context) {
 		"Referrer-Policy": "no-referrer",
 		"Cache-Control":   "max-age=0, no-cache, no-store, must-revalidate",
 	}
-	if c.Query("attachment") == "true" {
-		filename := stdpath.Base(innerPath)
-		headers["Content-Disposition"] = fmt.Sprintf("attachment; filename=\"%s\"", filename)
-	}
+	filename := stdpath.Base(innerPath)
+	headers["Content-Disposition"] = fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename))
 	contentType := c.Request.Header.Get("Content-Type")
 	if contentType == "" {
-		fileExt := stdpath.Ext(innerPath)
-		contentType = mime.TypeByExtension(fileExt)
+		contentType = utils.GetMimeType(filename)
 	}
 	c.DataFromReader(200, size, contentType, rc, headers)
 }
