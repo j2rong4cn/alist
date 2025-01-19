@@ -30,15 +30,74 @@ func (_ *Zip) GetMeta(ss *stream.SeekableStream, args model.ArchiveArgs) (model.
 		return nil, err
 	}
 	encrypted := false
+	dirMap := make(map[string]*model.ObjectTree)
+	dirMap["."] = &model.ObjectTree{}
 	for _, file := range zipReader.File {
 		if file.IsEncrypted() {
 			encrypted = true
 			break
 		}
+
+		name := strings.TrimPrefix(decodeName(file.Name), "/")
+		var dir string
+		var dirObj *model.ObjectTree
+		isNewFolder := false
+		if file.FileInfo().IsDir() {
+			dir = strings.TrimSuffix(name, "/")
+			dirObj = dirMap[dir]
+			if dirObj == nil {
+				isNewFolder = true
+				dirObj = &model.ObjectTree{}
+				dirMap[dir] = dirObj
+			}
+			dirObj.IsFolder = true
+			dirObj.Name = stdpath.Base(dir)
+			dirObj.Modified = file.ModTime()
+		} else {
+			dir = stdpath.Dir(name)
+			dirObj = dirMap[dir]
+			if dirObj == nil {
+				isNewFolder = true
+				dirObj = &model.ObjectTree{}
+				dirObj.IsFolder = true
+				dirObj.Name = stdpath.Base(dir)
+				dirObj.Modified = file.ModTime()
+				dirMap[dir] = dirObj
+			}
+			dirObj.Children = append(
+				dirObj.Children, &model.ObjectTree{
+					Object: *toModelObj(file.FileInfo()),
+				},
+			)
+		}
+		if isNewFolder {
+			dir = stdpath.Dir(dir)
+			pDirObj := dirMap[dir]
+			if pDirObj == nil {
+				for {
+					// 考虑多层文件夹 只有最里层有文件
+					tmp := &model.ObjectTree{}
+					tmp.IsFolder = true
+					tmp.Name = stdpath.Base(dir)
+					tmp.Modified = file.ModTime()
+					dirMap[dir] = tmp
+					if pDirObj == nil {
+						pDirObj = tmp
+					}
+					dir = stdpath.Dir(dir)
+					if dir == "." || dirMap[dir] != nil {
+						break
+					}
+				}
+			}
+			pDirObj.Children = append(pDirObj.Children, dirObj)
+		}
 	}
+
 	return &model.ArchiveMetaInfo{
 		Comment:   zipReader.Comment,
 		Encrypted: encrypted,
+		Tree:      dirMap["."].GetChildren(),
 	}, nil
 }
 
