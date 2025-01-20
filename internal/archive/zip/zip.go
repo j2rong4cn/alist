@@ -16,11 +16,11 @@ import (
 type Zip struct {
 }
 
-func (_ *Zip) AcceptedExtensions() []string {
+func (*Zip) AcceptedExtensions() []string {
 	return []string{".zip"}
 }
 
-func (_ *Zip) GetMeta(ss *stream.SeekableStream, args model.ArchiveArgs) (model.ArchiveMeta, error) {
+func (*Zip) GetMeta(ss *stream.SeekableStream, args model.ArchiveArgs) (model.ArchiveMeta, error) {
 	reader, err := stream.NewReadAtSeeker(ss, 0)
 	if err != nil {
 		return nil, err
@@ -42,18 +42,8 @@ func (_ *Zip) GetMeta(ss *stream.SeekableStream, args model.ArchiveArgs) (model.
 		var dir string
 		var dirObj *model.ObjectTree
 		isNewFolder := false
-		if file.FileInfo().IsDir() {
-			dir = strings.TrimSuffix(name, "/")
-			dirObj = dirMap[dir]
-			if dirObj == nil {
-				isNewFolder = true
-				dirObj = &model.ObjectTree{}
-				dirMap[dir] = dirObj
-			}
-			dirObj.IsFolder = true
-			dirObj.Name = stdpath.Base(dir)
-			dirObj.Modified = file.ModTime()
-		} else {
+		if !file.FileInfo().IsDir() {
+			// 先将 文件 添加到 所在的文件夹
 			dir = stdpath.Dir(name)
 			dirObj = dirMap[dir]
 			if dirObj == nil {
@@ -69,28 +59,41 @@ func (_ *Zip) GetMeta(ss *stream.SeekableStream, args model.ArchiveArgs) (model.
 					Object: *toModelObj(file.FileInfo()),
 				},
 			)
+		} else {
+			dir = strings.TrimSuffix(name, "/")
+			dirObj = dirMap[dir]
+			if dirObj == nil {
+				isNewFolder = true
+				dirObj = &model.ObjectTree{}
+				dirMap[dir] = dirObj
+			}
+			dirObj.IsFolder = true
+			dirObj.Name = stdpath.Base(dir)
+			dirObj.Modified = file.ModTime()
 		}
 		if isNewFolder {
+			// 将 文件夹 添加到 父文件夹
 			dir = stdpath.Dir(dir)
 			pDirObj := dirMap[dir]
-			if pDirObj == nil {
-				for {
-					// 考虑多层文件夹 只有最里层有文件
-					tmp := &model.ObjectTree{}
-					tmp.IsFolder = true
-					tmp.Name = stdpath.Base(dir)
-					tmp.Modified = file.ModTime()
-					dirMap[dir] = tmp
-					if pDirObj == nil {
-						pDirObj = tmp
-					}
-					dir = stdpath.Dir(dir)
-					if dir == "." || dirMap[dir] != nil {
-						break
-					}
-				}
+			if pDirObj != nil {
+				pDirObj.Children = append(pDirObj.Children, dirObj)
+				continue
 			}
-			pDirObj.Children = append(pDirObj.Children, dirObj)
+
+			for {
+				//	考虑压缩包仅记录文件的路径，不记录文件夹
+				pDirObj = &model.ObjectTree{}
+				pDirObj.IsFolder = true
+				pDirObj.Name = stdpath.Base(dir)
+				pDirObj.Modified = file.ModTime()
+				dirMap[dir] = pDirObj
+				pDirObj.Children = append(pDirObj.Children, dirObj)
+				dir = stdpath.Dir(dir)
+				if dirMap[dir] != nil {
+					break
+				}
+				dirObj = pDirObj
+			}
 		}
 	}
 
@@ -101,7 +104,7 @@ func (_ *Zip) GetMeta(ss *stream.SeekableStream, args model.ArchiveArgs) (model.
 	}, nil
 }
 
-func (_ *Zip) List(ss *stream.SeekableStream, args model.ArchiveInnerArgs) ([]model.Obj, error) {
+func (*Zip) List(ss *stream.SeekableStream, args model.ArchiveInnerArgs) ([]model.Obj, error) {
 	reader, err := stream.NewReadAtSeeker(ss, 0)
 	if err != nil {
 		return nil, err
@@ -163,7 +166,7 @@ func (_ *Zip) List(ss *stream.SeekableStream, args model.ArchiveInnerArgs) ([]mo
 	}
 }
 
-func (_ *Zip) Extract(ss *stream.SeekableStream, args model.ArchiveInnerArgs) (io.ReadCloser, int64, error) {
+func (*Zip) Extract(ss *stream.SeekableStream, args model.ArchiveInnerArgs) (io.ReadCloser, int64, error) {
 	reader, err := stream.NewReadAtSeeker(ss, 0)
 	if err != nil {
 		return nil, 0, err
@@ -188,7 +191,7 @@ func (_ *Zip) Extract(ss *stream.SeekableStream, args model.ArchiveInnerArgs) (i
 	return nil, 0, errs.ObjectNotFound
 }
 
-func (_ *Zip) Decompress(ss *stream.SeekableStream, outputPath string, args model.ArchiveInnerArgs, up model.UpdateProgress) error {
+func (*Zip) Decompress(ss *stream.SeekableStream, outputPath string, args model.ArchiveInnerArgs, up model.UpdateProgress) error {
 	reader, err := stream.NewReadAtSeeker(ss, 0)
 	if err != nil {
 		return err
