@@ -3,12 +3,13 @@ package op
 import (
 	"context"
 	stderrors "errors"
-	"github.com/alist-org/alist/v3/internal/archive/tool"
-	"github.com/alist-org/alist/v3/internal/stream"
 	"io"
 	stdpath "path"
 	"strings"
 	"time"
+
+	"github.com/alist-org/alist/v3/internal/archive/tool"
+	"github.com/alist-org/alist/v3/internal/stream"
 
 	"github.com/Xhofe/go-cache"
 	"github.com/alist-org/alist/v3/internal/driver"
@@ -40,8 +41,8 @@ func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get %s archive met: %+v", path, err)
 		}
-		if !storage.Config().NoCache {
-			archiveMetaCache.Set(key, m, cache.WithEx[*model.ArchiveMetaProvider](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
+		if m.Expiration != nil {
+			archiveMetaCache.Set(key, m, cache.WithEx[*model.ArchiveMetaProvider](*m.Expiration))
 		}
 		return m, nil
 	}
@@ -82,7 +83,12 @@ func getArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 		}
 		meta, err := storageAr.GetArchiveMeta(ctx, obj, args.ArchiveArgs)
 		if !errors.Is(err, errs.NotImplement) {
-			return obj, &model.ArchiveMetaProvider{ArchiveMeta: meta, DriverProviding: true}, err
+			archiveMetaProvider := &model.ArchiveMetaProvider{ArchiveMeta: meta, DriverProviding: true}
+			if !storage.Config().NoCache {
+				Expiration := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
+				archiveMetaProvider.Expiration = &Expiration
+			}
+			return obj, archiveMetaProvider, err
 		}
 	}
 	obj, t, ss, err := getArchiveToolAndStream(ctx, storage, path, args.LinkArgs)
@@ -95,7 +101,15 @@ func getArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 		}
 	}()
 	meta, err := t.GetMeta(ss, args.ArchiveArgs)
-	return obj, &model.ArchiveMetaProvider{ArchiveMeta: meta, DriverProviding: false}, err
+	archiveMetaProvider := &model.ArchiveMetaProvider{ArchiveMeta: meta, DriverProviding: false}
+	if ss.Link.MFile == nil {
+		archiveMetaProvider.Expiration = ss.Link.Expiration
+		if archiveMetaProvider.Expiration == nil && !storage.Config().NoCache {
+			Expiration := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
+			archiveMetaProvider.Expiration = &Expiration
+		}
+	}
+	return obj, archiveMetaProvider, err
 }
 
 var archiveListCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
