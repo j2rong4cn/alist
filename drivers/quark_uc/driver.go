@@ -73,6 +73,8 @@ func (d *QuarkOrUC) Link(ctx context.Context, file model.Obj, args model.LinkArg
 			"Cookie":     []string{d.Cookie},
 			"Referer":    []string{d.conf.referer},
 			"User-Agent": []string{ua},
+			"If-Range":   nil,
+			"If-Match":   nil,
 		},
 		Concurrency: 2,
 		PartSize:    10 * utils.MB,
