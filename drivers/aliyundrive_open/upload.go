@@ -15,6 +15,7 @@ import (
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/model"
+	streamPkg "github.com/alist-org/alist/v3/internal/stream"
 	"github.com/alist-org/alist/v3/pkg/http_range"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/avast/retry-go"
@@ -183,25 +184,18 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 	_, err, e := d.requestReturnErrResp("/adrive/v1.0/openFile/create", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(createData).SetResult(&createResp)
 	})
-	var tmpF model.File
 	if err != nil {
 		if e.Code != "PreHashMatched" || !rapidUpload {
 			return nil, err
 		}
 		log.Debugf("[aliyundrive_open] pre_hash matched, start rapid upload")
 
-		hi := stream.GetHash()
-		hash := hi.GetHash(utils.SHA1)
-		if len(hash) <= 0 {
-			tmpF, err = stream.CacheFullInTempFile()
+		hash := stream.GetHash().GetHash(utils.SHA1)
+		if len(hash) != utils.SHA1.Width {
+			_, hash, err = streamPkg.CacheFullInTempFileAndHash(stream, utils.SHA1)
 			if err != nil {
 				return nil, err
 			}
-			hash, err = utils.HashFile(utils.SHA1, tmpF)
-			if err != nil {
-				return nil, err
-			}
-
 		}
 
 		delete(createData, "pre_hash")

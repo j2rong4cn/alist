@@ -2,19 +2,18 @@ package _139
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"path"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
+	streamPkg "github.com/alist-org/alist/v3/internal/stream"
 	"github.com/alist-org/alist/v3/pkg/cron"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/pkg/utils/random"
@@ -71,28 +70,29 @@ func (d *Yun139) Init(ctx context.Context) error {
 	default:
 		return errs.NotImplement
 	}
-	if d.ref != nil {
-		return nil
-	}
-	decode, err := base64.StdEncoding.DecodeString(d.Authorization)
-	if err != nil {
-		return err
-	}
-	decodeStr := string(decode)
-	splits := strings.Split(decodeStr, ":")
-	if len(splits) < 2 {
-		return fmt.Errorf("authorization is invalid, splits < 2")
-	}
-	d.Account = splits[1]
-	_, err = d.post("/orchestration/personalCloud/user/v1.0/qryUserExternInfo", base.Json{
-		"qryUserExternInfoReq": base.Json{
-			"commonAccountInfo": base.Json{
-				"account":     d.getAccount(),
-				"accountType": 1,
-			},
-		},
-	}, nil)
-	return err
+	// if d.ref != nil {
+	// 	return nil
+	// }
+	// decode, err := base64.StdEncoding.DecodeString(d.Authorization)
+	// if err != nil {
+	// 	return err
+	// }
+	// decodeStr := string(decode)
+	// splits := strings.Split(decodeStr, ":")
+	// if len(splits) < 2 {
+	// 	return fmt.Errorf("authorization is invalid, splits < 2")
+	// }
+	// d.Account = splits[1]
+	// _, err = d.post("/orchestration/personalCloud/user/v1.0/qryUserExternInfo", base.Json{
+	// 	"qryUserExternInfoReq": base.Json{
+	// 		"commonAccountInfo": base.Json{
+	// 			"account":     d.getAccount(),
+	// 			"accountType": 1,
+	// 		},
+	// 	},
+	// }, nil)
+	// return err
+	return nil
 }
 
 func (d *Yun139) InitReference(storage driver.Driver) error {
@@ -526,12 +526,8 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	case MetaPersonalNew:
 		var err error
 		fullHash := stream.GetHash().GetHash(utils.SHA256)
-		if len(fullHash) <= 0 {
-			tmpF, err := stream.CacheFullInTempFile()
-			if err != nil {
-				return err
-			}
-			fullHash, err = utils.HashFile(utils.SHA256, tmpF)
+		if len(fullHash) != utils.SHA256.Width {
+			_, fullHash, err = streamPkg.CacheFullInTempFileAndHash(stream, utils.SHA256)
 			if err != nil {
 				return err
 			}

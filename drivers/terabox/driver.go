@@ -3,7 +3,6 @@ package terabox
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -177,12 +176,6 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 		return nil
 	}
 
-	// upload chunks
-	tempFile, err := stream.CacheFullInTempFile()
-	if err != nil {
-		return err
-	}
-
 	params := map[string]string{
 		"method":     "upload",
 		"path":       path,
@@ -199,7 +192,8 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 	count := int(math.Ceil(float64(streamSize) / float64(chunkSize)))
 	left := streamSize
 	uploadBlockList := make([]string, 0, count)
-	h := md5.New()
+	md5 := utils.MD5.NewFunc()
+	reader := io.TeeReader(stream, md5)
 	for partseq := 0; partseq < count; partseq++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -213,15 +207,14 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 			byteData = make([]byte, byteSize)
 		}
 		left -= byteSize
-		_, err = io.ReadFull(tempFile, byteData)
+		_, err = io.ReadFull(reader, byteData)
 		if err != nil {
 			return err
 		}
 
 		// calculate md5
-		h.Write(byteData)
-		uploadBlockList = append(uploadBlockList, hex.EncodeToString(h.Sum(nil)))
-		h.Reset()
+		md5.Reset()
+		uploadBlockList = append(uploadBlockList, hex.EncodeToString(md5.Sum(nil)))
 
 		u := "https://" + locateupload_resp.Host + "/rest/2.0/pcs/superfile2"
 		params["partseq"] = strconv.Itoa(partseq)

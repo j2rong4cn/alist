@@ -3,9 +3,8 @@ package quark
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
-	"crypto/sha1"
 	"encoding/hex"
+	"hash"
 	"io"
 	"net/http"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
+	streamPkg "github.com/alist-org/alist/v3/internal/stream"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
@@ -136,33 +136,33 @@ func (d *QuarkOrUC) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	tempFile, err := stream.CacheFullInTempFile()
-	if err != nil {
-		return err
+	md5Str, sha1Str := stream.GetHash().GetHash(utils.MD5), stream.GetHash().GetHash(utils.SHA1)
+	var (
+		md5  hash.Hash
+		sha1 hash.Hash
+	)
+	writers := make([]io.Writer, 0, 2)
+	if len(md5Str) != utils.MD5.Width {
+		md5 = utils.MD5.NewFunc()
+		writers = append(writers, md5)
 	}
-	defer func() {
-		_ = tempFile.Close()
-	}()
-	m := md5.New()
-	_, err = utils.CopyWithBuffer(m, tempFile)
-	if err != nil {
-		return err
+	if len(sha1Str) != utils.SHA1.Width {
+		sha1 = utils.SHA1.NewFunc()
+		writers = append(writers, sha1)
 	}
-	_, err = tempFile.Seek(0, io.SeekStart)
-	if err != nil {
-		return err
+
+	if len(writers) > 0 {
+		_, err := streamPkg.CacheFullInTempFileAndWriter(stream, io.MultiWriter(writers...))
+		if err != nil {
+			return err
+		}
+		if md5 != nil {
+			md5Str = hex.EncodeToString(md5.Sum(nil))
+		}
+		if sha1 != nil {
+			sha1Str = hex.EncodeToString(sha1.Sum(nil))
+		}
 	}
-	md5Str := hex.EncodeToString(m.Sum(nil))
-	s := sha1.New()
-	_, err = utils.CopyWithBuffer(s, tempFile)
-	if err != nil {
-		return err
-	}
-	_, err = tempFile.Seek(0, io.SeekStart)
-	if err != nil {
-		return err
-	}
-	sha1Str := hex.EncodeToString(s.Sum(nil))
 	// pre
 	pre, err := d.upPre(stream, dstDir.GetID())
 	if err != nil {
@@ -194,7 +194,7 @@ func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.File
 		} else {
 			part = make([]byte, left)
 		}
-		_, err := io.ReadFull(tempFile, part)
+		_, err := io.ReadFull(stream, part)
 		if err != nil {
 			return err
 		}

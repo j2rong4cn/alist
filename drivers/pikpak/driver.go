@@ -4,17 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/internal/op"
+	streamPkg "github.com/alist-org/alist/v3/internal/stream"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	hash_extend "github.com/alist-org/alist/v3/pkg/utils/hash"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
-	"net/http"
-	"strconv"
-	"strings"
 )
 
 type PikPak struct {
@@ -210,15 +212,10 @@ func (d *PikPak) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *PikPak) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	hi := stream.GetHash()
-	sha1Str := hi.GetHash(hash_extend.GCID)
-	if len(sha1Str) < hash_extend.GCID.Width {
-		tFile, err := stream.CacheFullInTempFile()
-		if err != nil {
-			return err
-		}
-
-		sha1Str, err = utils.HashFile(hash_extend.GCID, tFile, stream.GetSize())
+	gcid := stream.GetHash().GetHash(hash_extend.GCID)
+	var err error
+	if len(gcid) != hash_extend.GCID.Width {
+		_, gcid, err = streamPkg.CacheFullInTempFileAndHash(stream, hash_extend.GCID, stream.GetSize())
 		if err != nil {
 			return err
 		}
@@ -230,7 +227,7 @@ func (d *PikPak) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			"kind":        "drive#file",
 			"name":        stream.GetName(),
 			"size":        stream.GetSize(),
-			"hash":        strings.ToUpper(sha1Str),
+			"hash":        strings.ToUpper(gcid),
 			"upload_type": "UPLOAD_TYPE_RESUMABLE",
 			"objProvider": base.Json{"provider": "UPLOAD_TYPE_UNKNOWN"},
 			"parent_id":   dstDir.GetID(),

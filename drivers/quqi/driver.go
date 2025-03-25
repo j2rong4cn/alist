@@ -3,7 +3,9 @@ package quqi
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
+	"hash"
 	"io"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
+	streamPkg "github.com/alist-org/alist/v3/internal/stream"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/pkg/utils/random"
 	"github.com/aws/aws-sdk-go/aws"
@@ -281,19 +284,35 @@ func (d *Quqi) Remove(ctx context.Context, obj model.Obj) error {
 
 func (d *Quqi) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	// base info
+	md5Str, shaStr := stream.GetHash().GetHash(utils.MD5), stream.GetHash().GetHash(utils.SHA256)
+	var (
+		md5 hash.Hash
+		sha hash.Hash
+		err error
+	)
+	writers := make([]io.Writer, 0, 2)
+	if len(md5Str) != utils.MD5.Width {
+		md5 = utils.MD5.NewFunc()
+		writers = append(writers, md5)
+	}
+	if len(shaStr) != utils.SHA256.Width {
+		sha = utils.SHA256.NewFunc()
+		writers = append(writers, sha)
+	}
+
+	if len(writers) > 0 {
+		_, err = streamPkg.CacheFullInTempFileAndWriter(stream, io.MultiWriter(writers...))
+		if err != nil {
+			return nil, err
+		}
+		if md5 != nil {
+			md5Str = hex.EncodeToString(md5.Sum(nil))
+		}
+		if sha != nil {
+			shaStr = hex.EncodeToString(sha.Sum(nil))
+		}
+	}
 	sizeStr := strconv.FormatInt(stream.GetSize(), 10)
-	f, err := stream.CacheFullInTempFile()
-	if err != nil {
-		return nil, err
-	}
-	md5, err := utils.HashFile(utils.MD5, f)
-	if err != nil {
-		return nil, err
-	}
-	sha, err := utils.HashFile(utils.SHA256, f)
-	if err != nil {
-		return nil, err
-	}
 	// init upload
 	var uploadInitResp UploadInitResp
 	_, err = d.request("", "/api/upload/v1/file/init", resty.MethodPost, func(req *resty.Request) {
@@ -303,8 +322,8 @@ func (d *Quqi) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 			"parent_id": dstDir.GetID(),
 			"size":      sizeStr,
 			"file_name": stream.GetName(),
-			"md5":       md5,
-			"sha":       sha,
+			"md5":       md5Str,
+			"sha":       shaStr,
 			"is_slice":  "true",
 			"client_id": d.ClientID,
 		})
@@ -388,7 +407,7 @@ func (d *Quqi) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 	buf := make([]byte, 1024*1024*2)
 	fup := &driver.ReaderUpdatingProgress{
 		Reader: &driver.SimpleReaderWithSize{
-			Reader: f,
+			Reader: stream,
 			Size:   int64(len(buf)),
 		},
 		UpdateProgress: up,

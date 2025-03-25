@@ -4,6 +4,17 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"io"
+	"math/rand"
+	"mime"
+	"net/http"
+	"os"
+	stdpath "path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/alist-org/alist/v3/internal/archive/tool"
 	"github.com/alist-org/alist/v3/internal/conf"
 	"github.com/alist-org/alist/v3/internal/driver"
@@ -15,16 +26,6 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/xhofe/tache"
-	"io"
-	"math/rand"
-	"mime"
-	"net/http"
-	"os"
-	stdpath "path"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"time"
 )
 
 type ArchiveDownloadTask struct {
@@ -87,10 +88,10 @@ func (t *ArchiveDownloadTask) RunWithoutPushUploadTask() (*ArchiveContentUploadT
 		}
 	}()
 	var decompressUp model.UpdateProgress
-	if t.CacheFull {
+	if t.CacheFull && ss.GetFile() == nil {
 		t.SetTotalBytes(srcObj.GetSize())
 		t.status = "getting src object"
-		_, err = ss.CacheFullInTempFileAndUpdateProgress(t.SetProgress)
+		_, err = stream.CacheFullInTempFileAndUpdateProgress(ss, t.SetProgress)
 		if err != nil {
 			return nil, err
 		}
