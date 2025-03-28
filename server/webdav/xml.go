@@ -32,6 +32,7 @@ import (
 	// In the long term, this package should use the standard library's version
 	// only, and the internal fork deleted, once
 	// https://github.com/golang/go/issues/13400 is resolved.
+	"github.com/alist-org/alist/v3/pkg/utils"
 	ixml "github.com/alist-org/alist/v3/server/webdav/internal/xml"
 )
 
@@ -102,10 +103,11 @@ func writeLockInfo(w io.Writer, token string, ld LockDetails) (int, error) {
 }
 
 func escape(s string) string {
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		switch s[i] {
 		case '"', '&', '\'', '<', '>':
-			b := bytes.NewBuffer(nil)
+			b := utils.BufferPoolGet(len(s))
+			defer utils.BufferPoolPut(b)
 			ixml.EscapeText(b, []byte(s))
 			return b.String()
 		}

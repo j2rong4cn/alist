@@ -1,7 +1,6 @@
 package handles
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -133,7 +132,8 @@ func localProxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange boo
 	//优先处理md文件
 	if utils.Ext(file.GetName()) == "md" && setting.GetBool(conf.FilterReadMeScripts) {
 		w := c.Writer
-		buf := bytes.NewBuffer(make([]byte, 0, file.GetSize()))
+		buf := utils.BufferPoolGet(int(file.GetSize()))
+		defer utils.BufferPoolPut(buf)
 		err = common.Proxy(&proxyResponseWriter{ResponseWriter: w, Writer: buf}, c.Request, link, file)
 		if err == nil && buf.Len() > 0 {
 			if w.Status() < 200 || w.Status() > 300 {
@@ -141,12 +141,13 @@ func localProxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange boo
 				return
 			}
 
-			var html bytes.Buffer
-			if err = goldmark.Convert(buf.Bytes(), &html); err != nil {
+			html := utils.BufferPoolGet(int(file.GetSize()))
+			defer utils.BufferPoolPut(html)
+			if err = goldmark.Convert(buf.Bytes(), html); err != nil {
 				err = fmt.Errorf("markdown conversion failed: %w", err)
 			} else {
 				buf.Reset()
-				err = bluemonday.UGCPolicy().SanitizeReaderToWriter(&html, buf)
+				err = bluemonday.UGCPolicy().SanitizeReaderToWriter(html, buf)
 				if err == nil {
 					w.Header().Set("Content-Length", strconv.FormatInt(int64(buf.Len()), 10))
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")

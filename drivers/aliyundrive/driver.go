@@ -1,7 +1,6 @@
 package aliyundrive
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
@@ -211,8 +210,13 @@ func (d *AliDrive) Put(ctx context.Context, dstDir model.Obj, streamer model.Fil
 		localFile, _ = fileStream.Reader.(*os.File)
 	}
 	if d.RapidUpload {
-		buf := bytes.NewBuffer(make([]byte, 0, 1024))
-		utils.CopyWithBufferN(buf, file, 1024)
+		preSize := min(file.GetSize(), 1024)
+		buf := utils.BufferPoolGet(int(preSize))
+		defer utils.BufferPoolPut(buf)
+		_, err := utils.CopyWithBufferN(struct{ io.Writer }{buf}, file, preSize)
+		if err != nil {
+			return err
+		}
 		reqBody["pre_hash"] = utils.HashData(utils.SHA1, buf.Bytes())
 		if localFile != nil {
 			if _, err := localFile.Seek(0, io.SeekStart); err != nil {

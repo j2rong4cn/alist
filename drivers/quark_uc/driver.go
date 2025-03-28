@@ -1,7 +1,6 @@
 package quark
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"hash"
@@ -181,7 +180,8 @@ func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.File
 	total := stream.GetSize()
 	left := total
 	partSize := int64(pre.Metadata.PartSize)
-	part := make([]byte, partSize)
+	buf := utils.BufferPoolGet(int(partSize))
+	defer utils.BufferPoolPut(buf)
 	count := int(total / partSize)
 	if total%partSize > 0 {
 		count++
@@ -193,15 +193,16 @@ func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.File
 			return ctx.Err()
 		}
 		if left < partSize {
-			part = part[:left]
+			partSize = left
 		}
-		n, err := io.ReadFull(stream, part)
+		buf.Reset()
+		n, err := utils.CopyWithBufferN(struct{ io.Writer }{buf}, stream, partSize)
 		if err != nil {
 			return err
 		}
 		left -= int64(n)
 		log.Debugf("left: %d", left)
-		reader := driver.NewLimitedUploadStream(ctx, bytes.NewReader(part))
+		reader := driver.NewLimitedUploadStream(ctx, buf)
 		m, err := d.upPart(ctx, pre, stream.GetMimetype(), partNumber, reader)
 		//m, err := driver.UpPart(pre, file.GetMIMEType(), partNumber, bytes, account, md5Str, sha1Str)
 		if err != nil {

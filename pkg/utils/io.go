@@ -207,15 +207,16 @@ func Max[T constraints.Ordered](a, b T) T {
 }
 
 var IoBuffPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 32*1024*2) // Two times of size in io package
+	New: func() any {
+		buf := make([]byte, 32*1024*2) // Two times of size in io package
+		return &buf
 	},
 }
 
 func CopyWithBuffer(dst io.Writer, src io.Reader) (written int64, err error) {
-	buff := IoBuffPool.Get().([]byte)
+	buff := IoBuffPool.Get().(*[]byte)
 	defer IoBuffPool.Put(buff)
-	written, err = io.CopyBuffer(dst, src, buff)
+	written, err = io.CopyBuffer(dst, src, *buff)
 	if err != nil {
 		return
 	}
@@ -232,4 +233,24 @@ func CopyWithBufferN(dst io.Writer, src io.Reader, n int64) (written int64, err 
 		err = io.EOF
 	}
 	return
+}
+
+var bufferPool = &sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+func BufferPoolGet(size int) *bytes.Buffer {
+	buf := bufferPool.Get().(*bytes.Buffer)
+	if size > 0 {
+		buf.Grow(size)
+	}
+	return buf
+}
+func BufferPoolPut(buf *bytes.Buffer) {
+	if buf != nil {
+		buf.Reset()
+		bufferPool.Put(buf)
+	}
 }

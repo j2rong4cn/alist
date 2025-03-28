@@ -1,7 +1,6 @@
 package lanzou
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -10,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/alist-org/alist/v3/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -104,7 +104,8 @@ func Unbox(hex string) string {
 }
 
 func HexXor(hex1, hex2 string) string {
-	out := bytes.NewBuffer(make([]byte, len(hex1)))
+	out := utils.BufferPoolGet(len(hex1))
+	defer utils.BufferPoolPut(out)
 	for i := 0; i < len(hex1) && i < len(hex2); i += 2 {
 		v1, _ := strconv.ParseInt(hex1[i:i+2], 16, 64)
 		v2, _ := strconv.ParseInt(hex2[i:i+2], 16, 64)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -37,11 +38,11 @@ func isSymlinkDir(f fs.FileInfo, path string) bool {
 }
 
 // Get the snapshot of the video
-func (d *Local) GetSnapshot(videoPath string) (imgData *bytes.Buffer, err error) {
+func (d *Local) GetSnapshot(videoPath string, srcBuf *bytes.Buffer) (err error) {
 	// Run ffprobe to get the video duration
 	jsonOutput, err := ffmpeg.Probe(videoPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// get format.duration from the json string
 	type probeFormat struct {
@@ -53,24 +54,24 @@ func (d *Local) GetSnapshot(videoPath string) (imgData *bytes.Buffer, err error)
 	var probe probeData
 	err = json.Unmarshal([]byte(jsonOutput), &probe)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	totalDuration, err := strconv.ParseFloat(probe.Format.Duration, 64)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var ss string
 	if strings.HasSuffix(d.VideoThumbPos, "%") {
 		percentage, err := strconv.ParseFloat(strings.TrimSuffix(d.VideoThumbPos, "%"), 64)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		ss = fmt.Sprintf("%f", totalDuration*percentage/100)
 	} else {
 		val, err := strconv.ParseFloat(d.VideoThumbPos, 64)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		// If the value is greater than the total duration, use the total duration
 		if val > totalDuration {
@@ -81,7 +82,6 @@ func (d *Local) GetSnapshot(videoPath string) (imgData *bytes.Buffer, err error)
 	}
 
 	// Run ffmpeg to get the snapshot
-	srcBuf := bytes.NewBuffer(nil)
 	// If the remaining time from the seek point to the end of the video is less
 	// than the duration of a single frame, ffmpeg cannot extract any frames
 	// within the specified range and will exit with an error.
@@ -92,9 +92,9 @@ func (d *Local) GetSnapshot(videoPath string) (imgData *bytes.Buffer, err error)
 		GlobalArgs("-loglevel", "error").Silent(true).
 		WithOutput(srcBuf, os.Stdout)
 	if err = stream.Run(); err != nil {
-		return nil, err
+		return err
 	}
-	return srcBuf, nil
+	return nil
 }
 
 func readDir(dirname string) ([]fs.FileInfo, error) {
@@ -125,9 +125,11 @@ func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
 			return nil, &thumbPath, nil
 		}
 	}
-	var srcBuf *bytes.Buffer
+	var srcBuf io.Reader
 	if utils.GetFileType(file.GetName()) == conf.VIDEO {
-		videoBuf, err := d.GetSnapshot(fullPath)
+		videoBuf := utils.BufferPoolGet(0)
+		defer utils.BufferPoolPut(videoBuf)
+		err := d.GetSnapshot(fullPath, videoBuf)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -137,7 +139,7 @@ func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		imgBuf := bytes.NewBuffer(imgData)
+		imgBuf := bytes.NewReader(imgData)
 		srcBuf = imgBuf
 	}
 
