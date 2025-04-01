@@ -103,23 +103,23 @@ func (d *Alias) link(ctx context.Context, dst, sub string, args model.LinkArgs) 
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := storage.(*Alias); !ok && !args.Redirect {
-		link, _, err := op.Link(ctx, storage, reqActualPath, args)
-		return link, err
+	shouldProxy := args.Redirect && common.ShouldProxy(storage, stdpath.Base(sub))
+	if !shouldProxy {
+		_, shouldProxy = storage.(*Alias)
 	}
-	_, err = fs.Get(ctx, reqPath, &fs.GetArgs{NoLog: true})
-	if err != nil {
-		return nil, err
-	}
-	if common.ShouldProxy(storage, stdpath.Base(sub)) {
+	if shouldProxy {
+		_, err = fs.Get(ctx, reqPath, &fs.GetArgs{NoLog: true})
+		if err != nil {
+			return nil, err
+		}
 		link := &model.Link{
 			URL: fmt.Sprintf("%s/p%s?sign=%s",
 				common.GetApiUrl(args.HttpReq),
 				utils.EncodePath(reqPath, true),
 				sign.Sign(reqPath)),
 		}
-		if args.HttpReq != nil && d.ProxyRange {
-			link.RangeReadCloser = common.NoProxyRange
+		if d.ProxyRange {
+			link.Concurrency = common.NoProxyRangeMark
 		}
 		return link, nil
 	}
@@ -195,31 +195,31 @@ func (d *Alias) extract(ctx context.Context, dst, sub string, args model.Archive
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := storage.(driver.ArchiveReader); ok {
-		if _, ok := storage.(*Alias); !ok && !args.Redirect {
-			link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
-			return link, err
-		}
+	if _, ok := storage.(driver.ArchiveReader); !ok {
+		return nil, errs.NotImplement
+	}
+	redirect := args.Redirect
+	if !redirect {
+		_, redirect = storage.(*Alias)
+	}
+	if redirect && common.ShouldProxy(storage, stdpath.Base(sub)) {
 		_, err = fs.Get(ctx, reqPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
 			return nil, err
 		}
-		if common.ShouldProxy(storage, stdpath.Base(sub)) {
-			link := &model.Link{
-				URL: fmt.Sprintf("%s/ap%s?inner=%s&pass=%s&sign=%s",
-					common.GetApiUrl(args.HttpReq),
-					utils.EncodePath(reqPath, true),
-					utils.EncodePath(args.InnerPath, true),
-					url.QueryEscape(args.Password),
-					sign.SignArchive(reqPath)),
-			}
-			if args.HttpReq != nil && d.ProxyRange {
-				link.RangeReadCloser = common.NoProxyRange
-			}
-			return link, nil
+		link := &model.Link{
+			URL: fmt.Sprintf("%s/ap%s?inner=%s&pass=%s&sign=%s",
+				common.GetApiUrl(args.HttpReq),
+				utils.EncodePath(reqPath, true),
+				utils.EncodePath(args.InnerPath, true),
+				url.QueryEscape(args.Password),
+				sign.SignArchive(reqPath)),
 		}
-		link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
-		return link, err
+		if d.ProxyRange {
+			link.Concurrency = common.NoProxyRangeMark
+		}
+		return link, nil
 	}
-	return nil, errs.NotImplement
+	link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
+	return link, err
 }

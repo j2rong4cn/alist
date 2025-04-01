@@ -11,6 +11,7 @@ import (
 	"github.com/alist-org/alist/v3/internal/fs"
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/pkg/utils"
+	"github.com/alist-org/alist/v3/server/common"
 )
 
 type Alias struct {
@@ -108,10 +109,13 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	if !ok {
 		return nil, errs.ObjectNotFound
 	}
+	if strings.HasSuffix(root, ".proxy") {
+		args.Redirect = true
+	}
 	for _, dst := range dsts {
 		link, err := d.link(ctx, dst, sub, args)
 		if err == nil {
-			if !args.Redirect && len(link.URL) > 0 {
+			if !args.Redirect && len(link.URL) > 0 && link.Concurrency != common.NoProxyRangeMark {
 				// 正常情况下 多并发 仅支持返回URL的驱动
 				// alias套娃alias 可以让crypt、mega等驱动(不返回URL的) 支持并发
 				if d.DownloadConcurrency > 0 {
@@ -282,14 +286,6 @@ func (d *Alias) Extract(ctx context.Context, obj model.Obj, args model.ArchiveIn
 	for _, dst := range dsts {
 		link, err := d.extract(ctx, dst, sub, args)
 		if err == nil {
-			if !args.Redirect && len(link.URL) > 0 {
-				if d.DownloadConcurrency > 0 {
-					link.Concurrency = d.DownloadConcurrency
-				}
-				if d.DownloadPartSize > 0 {
-					link.PartSize = d.DownloadPartSize * utils.KB
-				}
-			}
 			return link, nil
 		}
 	}
