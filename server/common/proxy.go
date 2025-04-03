@@ -38,11 +38,10 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 		return nil
 	} else if link.RangeReadCloser != nil {
 		attachHeader(w, file)
-		net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &stream.RateLimitRangeReadCloser{
+		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &stream.RateLimitRangeReadCloser{
 			RangeReadCloserIF: link.RangeReadCloser,
 			Limiter:           stream.ServerDownloadLimit,
 		})
-		return nil
 	} else if link.Concurrency > 0 || link.PartSize > 0 {
 		attachHeader(w, file)
 		size := file.GetSize()
@@ -65,11 +64,10 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 			rc, err := down.Download(ctx, req)
 			return rc, err
 		}
-		net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &stream.RateLimitRangeReadCloser{
+		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &stream.RateLimitRangeReadCloser{
 			RangeReadCloserIF: &model.RangeReadCloser{RangeReader: rangeReader},
 			Limiter:           stream.ServerDownloadLimit,
 		})
-		return nil
 	} else {
 		//transparent proxy
 		header := net.ProcessHeader(r.Header, link.Header)
@@ -89,10 +87,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 			Limiter: stream.ServerDownloadLimit,
 			Ctx:     r.Context(),
 		})
-		if err != nil {
-			return err
-		}
-		return nil
+		return err
 	}
 }
 func attachHeader(w http.ResponseWriter, file model.Obj) {
@@ -122,4 +117,30 @@ func ProxyRange(link *model.Link, size int64) {
 		return
 	}
 	link.RangeReadCloser, _ = stream.GetRangeReadCloserFromLink(size, link)
+}
+
+type InterceptResponseWriter struct {
+	http.ResponseWriter
+	io.Writer
+}
+
+func (iw *InterceptResponseWriter) Write(p []byte) (int, error) {
+	return iw.Writer.Write(p)
+}
+
+type WrittenResponseWriter struct {
+	http.ResponseWriter
+	written bool
+}
+
+func (ww *WrittenResponseWriter) Write(p []byte) (int, error) {
+	n, err := ww.ResponseWriter.Write(p)
+	if !ww.written && n > 0 {
+		ww.written = true
+	}
+	return n, err
+}
+
+func (ww *WrittenResponseWriter) IsWritten() bool {
+	return ww.written
 }
