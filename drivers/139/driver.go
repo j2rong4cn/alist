@@ -112,7 +112,7 @@ func (d *Yun139) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Error("query route result", err)
+	log.Info("Query route result completed successfully")
 
 	for _, policyItem := range resp.Data.RoutePolicyList {
 		if policyItem.ModName == "personal" {
